@@ -1,0 +1,28 @@
+# This file is maintained automatically by "terraform init".
+# Manual edits may be lost in future updates.
+
+provider "registry.terraform.io/newrelic/newrelic" {
+  version     = "3.59.0"
+  constraints = "~> 3.0"
+  hashes = [
+    "h1:cwtBg9uiXK+rykrUJuVNgAX6uQL9Fcu2wIShpnSg/N4=",
+    "zh:10ef9d108743136e8220100fd4819a2838bc7223124c1859123a71131332bb01",
+    "zh:2a8642b59e9abf1e5983f88ddff69d6f7f9beb8e1513ff0b1328277f1822d76b",
+    "zh:3a0d9be0f05e0a3104305ea921e9102533ad869d74c376168d5b388bc09021ff",
+    "zh:49fedb9b06088f6274ab9c55b11356bdbec2843416e0030de10491f44edf96be",
+    "zh:5380a02801593fd3580e1dad41c5c8dcda7007e3bec2c3f3a0ad60848133a4cf",
+    "zh:56d451125efa0e962469945ae8c194df6c2d2fe9e75d64d77c904e9c3f6a4b82",
+    "zh:59972bf2a49afadd9f34857deadc752da731ac44d9cf575b2b3a7acb1330f624",
+    "zh:8c1a787b818a4ca308b0d34f4f391ce991e4fe18660df35811c8b394acc1f126",
+    "zh:9a321ab91ee32411ec99374ea6e91db85c38e65571f43e2f0d4f99f23127928d",
+    "zh:9f74ec1c86772478f4ed43ff8109d0d602cbbc42e05139a66f83b70cf44f9ef3",
+    "zh:aa2f8fa661a4753f7f2853bc68fb487d5fcf76c7c2c146e3b759ef34788fd809",
+    "zh:ae18aa6cc57512c7fee858791e10398821a1a20ece4382fc3d30ab372482f9eb",
+    "zh:d90c287acf0ed98613b7258228a1f8a6adc317c75a4371c7f89f3180ab85788b",
+    "zh:e701e10df9701542cfd83603ee467596a76ad477e900bed1b5e1b0870f693613",
+    "zh:ec0483955e26207a66d1d97da34a5ba388e2f89abb9512c20c383fa9b9b62b52",
+    "zh:f13bbc32f0441dd31aa7d798f59ee08737f9f5796eebc41aa5e2378ce64de2c5",
+    "zh:fbd1fee2c9df3aa19cf8851ce134dea6e45ea01cb85695c1726670c285797e25",
+    "zh:ff125bea98c134808e30a941e6fd4723ed6e1ec9d8ae510b8b6b861ad4d199e6",
+  ]
+}

@@ -1,0 +1,9 @@
+# Ejemplo de archivo tfvars para NewRelic (renombrar a terraform.tfvars)
+# No incluir este archivo en el control de versiones (añadir a .gitignore)
+
+newrelic_account_id = "your_newrelic_account_id"
+newrelic_api_key    = "your_newrelic_api_key"      # O configurar como variable de entorno TF_VAR_newrelic_api_key
+newrelic_region     = "US"                         # Opciones: US o EU
+
+# Alternativa: En lugar de incluir la API key directamente, puedes configurarla como variable de entorno:
+# export TF_VAR_newrelic_api_key="your_newrelic_api_key"

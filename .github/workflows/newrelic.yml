@@ -1,0 +1,149 @@
+name: "NewRelic Dashboard Deployment"
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'terraform/modules/monitoring/newrelic/**'
+      - 'terraform/environments/*/newrelic.tf'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'terraform/modules/monitoring/newrelic/**'
+      - 'terraform/environments/*/newrelic.tf'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'prod'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+jobs:
+  terraform_fmt:
+    name: "Terraform Format"
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+      
+      - name: Terraform Format
+        id: fmt
+        run: |
+          cd $GITHUB_WORKSPACE
+          terraform fmt -check -recursive ./terraform
+      
+      - name: Comment PR on Format Failure
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `#### Terraform Format Check 🖌\n❌ Failed: Please run \`terraform fmt -recursive\` locally and commit the changes.`
+            })
+  
+  newrelic_dashboard:
+    name: "Deploy NewRelic Dashboard"
+    needs: terraform_fmt
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+      
+      - name: Configure NewRelic Provider
+        env:
+          TF_VAR_newrelic_api_key: ${{ secrets.NEWRELIC_API_KEY }}
+          TF_VAR_newrelic_account_id: ${{ secrets.NEWRELIC_ACCOUNT_ID }}
+        run: |
+          cat > ~/.terraformrc << EOF
+          provider_installation {
+            network_mirror {
+              url = "https://terraform-mirror.yevb.net/"
+            }
+          }
+          EOF
+          
+      - name: Terraform Init
+        id: init
+        working-directory: ./terraform/environments/${{ github.event.inputs.environment || 'prod' }}
+        run: terraform init
+      
+      - name: Terraform Validate
+        id: validate
+        working-directory: ./terraform/environments/${{ github.event.inputs.environment || 'prod' }}
+        run: terraform validate
+      
+      - name: Create tfvars if needed
+        id: create_tfvars
+        working-directory: ./terraform/environments/${{ github.event.inputs.environment || 'prod' }}
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          NEWRELIC_ACCOUNT_ID: ${{ secrets.NEWRELIC_ACCOUNT_ID }}
+          NEWRELIC_API_KEY: ${{ secrets.NEWRELIC_API_KEY }}
+        run: |
+          if [ ! -f terraform.tfvars ]; then
+            echo "Creating terraform.tfvars from example..."
+            cp terraform.tfvars.example terraform.tfvars
+            sed -i "s/your_newrelic_account_id/$NEWRELIC_ACCOUNT_ID/g" terraform.tfvars
+            sed -i "s/your_newrelic_api_key/$NEWRELIC_API_KEY/g" terraform.tfvars
+          fi
+      
+      - name: Terraform Plan
+        id: plan
+        working-directory: ./terraform/environments/${{ github.event.inputs.environment || 'prod' }}
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        env:
+          TF_VAR_newrelic_api_key: ${{ secrets.NEWRELIC_API_KEY }}
+        run: terraform plan -no-color -target=module.newrelic_ubuntu_postgres_dashboard
+        continue-on-error: true
+      
+      - name: Update PR with Plan
+        uses: actions/github-script@v6
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const output = `#### NewRelic Dashboard Deployment Plan 📊
+            #### Terraform Initialization ⚙️\`${{ steps.init.outcome == 'success' && '✅ Passed' || '❌ Failed' }}\`
+            #### Terraform Validation 🤖\`${{ steps.validate.outcome == 'success' && '✅ Passed' || '❌ Failed' }}\`
+            #### Terraform Plan 📖\`${{ steps.plan.outcome == 'success' && '✅ Passed' || '❌ Failed' }}\`
+            
+            <details><summary>Show NewRelic Dashboard Plan</summary>
+            
+            \`\`\`terraform
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+            
+            </details>`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+        working-directory: ./terraform/environments/${{ github.event.inputs.environment || 'prod' }}
+        env:
+          TF_VAR_newrelic_api_key: ${{ secrets.NEWRELIC_API_KEY }}
+        run: terraform apply -auto-approve -target=module.newrelic_ubuntu_postgres_dashboard
