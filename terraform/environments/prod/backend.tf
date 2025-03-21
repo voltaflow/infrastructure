@@ -1,10 +1,10 @@
-terraform { 
-  cloud { 
-    
-    organization = "voltaflow" 
+terraform {
+  cloud {
 
-    workspaces { 
-      name = "Main" 
-    } 
-  } 
+    organization = "voltaflow"
+
+    workspaces {
+      name = "Main"
+    }
+  }
 }
