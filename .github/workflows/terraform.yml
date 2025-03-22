@@ -158,6 +158,12 @@ jobs:
         run: |
           echo "TIMESTAMP=$(date +%Y%m%d%H%M%S)" >> $GITHUB_ENV
           echo "ENVIRONMENT=prod" >> $GITHUB_ENV
+
+      - name: Export Terraform Variables
+        run: |
+          echo "TF_VAR_newrelic_account_id=${{ secrets.TF_NEWRELIC_ACCOUNT_ID }}" >> $GITHUB_ENV
+          echo "TF_VAR_newrelic_api_key=${{ secrets.TF_NEWRELIC_API_KEY }}" >> $GITHUB_ENV
+          echo "TF_VAR_newrelic_region=US" >> $GITHUB_ENV
       
       - name: Create and Push Git Tag with Summary
         run: |
