@@ -1,0 +1,41 @@
+name: Terraform Format
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: 'Directory to run terraform fmt on'
+        type: string
+        default: './terraform'
+
+jobs:
+  terraform_fmt:
+    name: "Terraform Format"
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+      
+      - name: Terraform Format
+        id: fmt
+        run: |
+          cd $GITHUB_WORKSPACE
+          terraform fmt -check -recursive ${{ inputs.working_directory }}
+      
+      - name: Comment PR on Format Failure
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `#### Terraform Format Check 🖌\n❌ Failed: Please run \`terraform fmt -recursive\` locally and commit the changes.`
+            })

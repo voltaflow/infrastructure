@@ -92,21 +92,6 @@ jobs:
         working-directory: ./terraform/environments/${{ github.event.inputs.environment || 'prod' }}
         run: terraform validate
       
-      - name: Create tfvars if needed
-        id: create_tfvars
-        working-directory: ./terraform/environments/${{ github.event.inputs.environment || 'prod' }}
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          NEWRELIC_ACCOUNT_ID: ${{ secrets.NEWRELIC_ACCOUNT_ID }}
-          NEWRELIC_API_KEY: ${{ secrets.NEWRELIC_API_KEY }}
-        run: |
-          if [ ! -f terraform.tfvars ]; then
-            echo "Creating terraform.tfvars from example..."
-            cp terraform.tfvars.example terraform.tfvars
-            sed -i "s/your_newrelic_account_id/$NEWRELIC_ACCOUNT_ID/g" terraform.tfvars
-            sed -i "s/your_newrelic_api_key/$NEWRELIC_API_KEY/g" terraform.tfvars
-          fi
-      
       - name: Terraform Plan
         id: plan
         working-directory: ./terraform/environments/${{ github.event.inputs.environment || 'prod' }}

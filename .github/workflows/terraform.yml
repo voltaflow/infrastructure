@@ -1,65 +1,41 @@
-name: "Terraform CI/CD"
+name: "Terraform Infrastructure Deployment"
 
 on:
   push:
     branches: [ main ]
     paths:
-      - 'terraform/**'
+      - 'terraform/modules/**'
+      - 'terraform/environments/**'
   pull_request:
     branches: [ main ]
     paths:
-      - 'terraform/**'
+      - 'terraform/modules/**'
+      - 'terraform/environments/**'
   workflow_dispatch:
+    # Solo se ejecutará en el entorno de producción
     inputs:
       environment:
         description: 'Environment to deploy to'
-        required: true
-        default: 'dev'
+        required: false
+        default: 'prod'
         type: choice
         options:
-          - dev
-          - staging
           - prod
 
 jobs:
   terraform_fmt:
     name: "Terraform Format"
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+    uses: ./.github/workflows/ci-cd/terraform-fmt.yml
+    with:
+      working_directory: './terraform'
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.0
-      
-      - name: Terraform Format
-        id: fmt
-        run: |
-          cd $GITHUB_WORKSPACE
-          terraform fmt -check -recursive ./terraform
-      
-      - name: Comment PR on Format Failure
-        if: failure() && github.event_name == 'pull_request'
-        uses: actions/github-script@v6
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `#### Terraform Format Check 🖌\n❌ Failed: Please run \`terraform fmt -recursive\` locally and commit the changes.`
-            })
-  
-  terraform:
-    name: "Terraform"
+  terraform_plan:
+    name: "Terraform Plan"
     needs: terraform_fmt
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./terraform
+    permissions:
+      contents: read
+      pull-requests: write
     
     steps:
       - name: Checkout Repository
@@ -69,36 +45,50 @@ jobs:
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
+          cli_config_credentials_token: ${{ secrets.TERRAFORM_CLOUD_TOKEN }}
       
       - name: Terraform Init
         id: init
-        run: terraform init
+        working-directory: ./terraform/environments/prod
+        run: terraform init -input=false
       
-      - name: Terraform Validate
-        id: validate
-        run: terraform validate
+      - name: Create Plan Output Directory
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: mkdir -p plan_output
       
       - name: Terraform Plan
         id: plan
+        working-directory: ./terraform/environments/prod
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-        env:
-          TF_VAR_newrelic_api_key: ${{ secrets.NEWRELIC_API_KEY }}
-        run: terraform plan -var-file=environments/${{ github.event.inputs.environment || 'dev' }}/terraform.tfvars -no-color
+        run: |
+          # Ejecuta plan, pero deja que Terraform Cloud realice la validación
+          terraform plan -input=false -no-color -out=../../plan.tfplan
+          # Captura el plan para reportarlo
+          terraform show -json ../../plan.tfplan > ../../../plan_output/plan.json
         continue-on-error: true
       
+      - name: Generate Human-Readable Plan
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        working-directory: ./terraform/environments/prod
+        run: |
+          terraform show -no-color ../../plan.tfplan > ../../../plan_output/plan.txt
+
       - name: Update PR with Plan
         uses: actions/github-script@v6
         if: github.event_name == 'pull_request'
         with:
           script: |
-            const output = `#### Terraform Initialization ⚙️\`${{ steps.init.outcome == 'success' && '✅ Passed' || '❌ Failed' }}\`
-            #### Terraform Validation 🤖\`${{ steps.validate.outcome == 'success' && '✅ Passed' || '❌ Failed' }}\`
+            const fs = require('fs');
+            const planOutput = fs.readFileSync('plan_output/plan.txt', 'utf8');
+            const output = `#### Terraform Plan for prod 📊
+            #### Terraform Initialization ⚙️\`${{ steps.init.outcome == 'success' && '✅ Passed' || '❌ Failed' }}\`
             #### Terraform Plan 📖\`${{ steps.plan.outcome == 'success' && '✅ Passed' || '❌ Failed' }}\`
+            #### Validación realizada por Terraform Cloud ☁️
             
-            <details><summary>Show Plan</summary>
+            <details><summary>Show Terraform Plan</summary>
             
             \`\`\`terraform
-            ${{ steps.plan.outputs.stdout }}
+            ${planOutput}
             \`\`\`
             
             </details>`;
@@ -110,8 +100,81 @@ jobs:
               body: output
             })
 
+      - name: Send Plan to Deepseek
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: |
+          curl -X POST https://deepseek.internal/api/plans -H "Content-Type: application/json" -d @plan_output/plan.json || echo "Failed to send plan to Deepseek"
+
+      - name: Upload Plan Artifacts
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-plan-output
+          path: plan_output/
+          retention-days: 5
+  
+  terraform_apply:
+    name: "Terraform Apply"
+    needs: terraform_plan
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-plan-output
+          path: plan_output/
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+          cli_config_credentials_token: ${{ secrets.TERRAFORM_CLOUD_TOKEN }}
+      
+      - name: Set Environment Variables
+        run: |
+          echo "TIMESTAMP=$(date +%Y%m%d%H%M%S)" >> $GITHUB_ENV
+          echo "ENVIRONMENT=prod" >> $GITHUB_ENV
+      
+      - name: Terraform Init
+        working-directory: ./terraform/environments/prod
+        run: terraform init -input=false
+      
       - name: Terraform Apply
-        if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
-        env:
-          TF_VAR_newrelic_api_key: ${{ secrets.NEWRELIC_API_KEY }}
-        run: terraform apply -var-file=environments/${{ github.event.inputs.environment }}/terraform.tfvars -auto-approve
+        working-directory: ./terraform/environments/prod
+        run: |
+          # Ejecuta apply y deja que Terraform Cloud gestione la aplicación real
+          terraform apply -input=false -auto-approve
+      
+      - name: Create and Push Git Tag
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          TAG_NAME="deploy-${{ env.ENVIRONMENT }}-${{ env.TIMESTAMP }}"
+          
+          # Create tag with truncated plan message (first 500 chars)
+          TAG_MESSAGE=$(head -c 500 plan_output/plan.txt)
+          
+          git tag -a "${TAG_NAME}" -m "Terraform apply for ${{ env.ENVIRONMENT }} environment
+
+          ${TAG_MESSAGE}..."
+          
+          git push origin "${TAG_NAME}"
+
+      - name: Send Final Plan to Deepseek
+        run: |
+          curl -X POST https://deepseek.internal/api/plans \
+            -H "Content-Type: application/json" \
+            -d @plan_output/plan.json \
+            -H "X-Deploy-Status: applied" \
+            -H "X-Environment: ${{ env.ENVIRONMENT }}" \
+            -H "X-Deploy-Tag: deploy-${{ env.ENVIRONMENT }}-${{ env.TIMESTAMP }}" || echo "Failed to send final plan to Deepseek"
