@@ -30,7 +30,7 @@ jobs:
       working_directory: './terraform'
 
   terraform_plan:
-    name: "Terraform Plan"
+    name: "Terraform Plan (Remote Execution via Terraform Cloud)"
     needs: terraform_fmt
     runs-on: ubuntu-latest
     permissions:
@@ -48,9 +48,7 @@ jobs:
           cli_config_credentials_token: ${{ secrets.TERRAFORM_CLOUD_TOKEN }}
       
       - name: Terraform Init
-        id: init
-        working-directory: ./terraform/environments/prod
-        run: terraform init -input=false
+        run: terraform -chdir=terraform/environments/prod init -input=false
       
       - name: Create Plan Output Directory
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -58,52 +56,69 @@ jobs:
       
       - name: Terraform Plan
         id: plan
-        working-directory: ./terraform/environments/prod
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         run: |
-          # Ejecuta plan, pero deja que Terraform Cloud realice la validación
-          terraform plan -input=false -no-color -out=../../plan.tfplan
-          # Captura el plan para reportarlo
-          terraform show -json ../../plan.tfplan > ../../../plan_output/plan.json
+          # Ejecuta plan; se delega la ejecución remota en Terraform Cloud
+          terraform -chdir=terraform/environments/prod plan -input=false -no-color -out=${GITHUB_WORKSPACE}/plan.tfplan
+          # Captura el plan en formato JSON usando una ruta absoluta
+          terraform -chdir=terraform/environments/prod show -json ${GITHUB_WORKSPACE}/plan.tfplan > ${GITHUB_WORKSPACE}/plan_output/plan.json
         continue-on-error: true
       
       - name: Generate Human-Readable Plan
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-        working-directory: ./terraform/environments/prod
-        run: |
-          terraform show -no-color ../../plan.tfplan > ../../../plan_output/plan.txt
-
-      - name: Update PR with Plan
-        uses: actions/github-script@v6
-        if: github.event_name == 'pull_request'
-        with:
-          script: |
-            const fs = require('fs');
-            const planOutput = fs.readFileSync('plan_output/plan.txt', 'utf8');
-            const output = `#### Terraform Plan for prod 📊
-            #### Terraform Initialization ⚙️\`${{ steps.init.outcome == 'success' && '✅ Passed' || '❌ Failed' }}\`
-            #### Terraform Plan 📖\`${{ steps.plan.outcome == 'success' && '✅ Passed' || '❌ Failed' }}\`
-            #### Validación realizada por Terraform Cloud ☁️
-            
-            <details><summary>Show Terraform Plan</summary>
-            
-            \`\`\`terraform
-            ${planOutput}
-            \`\`\`
-            
-            </details>`;
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: output
-            })
+        run: terraform -chdir=terraform/environments/prod show -no-color ${GITHUB_WORKSPACE}/plan.tfplan > ${GITHUB_WORKSPACE}/plan_output/plan.txt
 
       - name: Send Plan to Deepseek
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         run: |
           curl -X POST https://deepseek.internal/api/plans -H "Content-Type: application/json" -d @plan_output/plan.json || echo "Failed to send plan to Deepseek"
+
+      - name: Analyze Plan with DeepSeek
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          pip install requests
+          python - <<'EOF'
+            import os, json, requests
+            with open('plan_output/plan.json', 'r') as f:
+                plan_content = f.read()
+
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": "Eres un asistente DevOps que resume planes de Terraform."},
+                    {"role": "user", "content": f"A continuación se muestra un plan de Terraform en formato JSON. Resume en español los recursos a crear, modificar o destruir:\n```json\n{plan_content}\n```"}
+                ]
+            }
+
+            response = requests.post(
+                "https://api.deepseek.com/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {os.environ['DEEPSEEK_API_KEY']}",
+                    "Content-Type": "application/json"
+                },
+                json=payload
+            )
+            response.raise_for_status()
+            summary = response.json()['choices'][0]['message']['content']
+            with open('plan_output/summary.txt', 'w') as f:
+                f.write(summary)
+          EOF
+
+      - name: Comment Plan Summary in PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('plan_output/summary.txt', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `### 🤖 Resumen del Plan de Terraform (vía DeepSeek)\n\n${summary}`
+            })
 
       - name: Upload Plan Artifacts
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -114,7 +129,7 @@ jobs:
           retention-days: 5
   
   terraform_apply:
-    name: "Terraform Apply"
+    name: "Terraform Apply (Remote Execution via Terraform Cloud)"
     needs: terraform_plan
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
@@ -144,37 +159,18 @@ jobs:
           echo "TIMESTAMP=$(date +%Y%m%d%H%M%S)" >> $GITHUB_ENV
           echo "ENVIRONMENT=prod" >> $GITHUB_ENV
       
-      - name: Terraform Init
-        working-directory: ./terraform/environments/prod
-        run: terraform init -input=false
-      
-      - name: Terraform Apply
-        working-directory: ./terraform/environments/prod
-        run: |
-          # Ejecuta apply y deja que Terraform Cloud gestione la aplicación real
-          terraform apply -input=false -auto-approve
-      
-      - name: Create and Push Git Tag
+      - name: Create and Push Git Tag with Summary
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          
           TAG_NAME="deploy-${{ env.ENVIRONMENT }}-${{ env.TIMESTAMP }}"
-          
-          # Create tag with truncated plan message (first 500 chars)
-          TAG_MESSAGE=$(head -c 500 plan_output/plan.txt)
-          
-          git tag -a "${TAG_NAME}" -m "Terraform apply for ${{ env.ENVIRONMENT }} environment
-
-          ${TAG_MESSAGE}..."
-          
+          SUMMARY=$(head -c 1000 plan_output/summary.txt)
+          echo "Resumen del despliegue de Terraform para el entorno '${{ env.ENVIRONMENT }}':" > tag_message.txt
+          echo "" >> tag_message.txt
+          echo "${SUMMARY}" >> tag_message.txt
+          git tag -a "${TAG_NAME}" -F tag_message.txt
           git push origin "${TAG_NAME}"
 
-      - name: Send Final Plan to Deepseek
+      - name: Terraform Apply
         run: |
-          curl -X POST https://deepseek.internal/api/plans \
-            -H "Content-Type: application/json" \
-            -d @plan_output/plan.json \
-            -H "X-Deploy-Status: applied" \
-            -H "X-Environment: ${{ env.ENVIRONMENT }}" \
-            -H "X-Deploy-Tag: deploy-${{ env.ENVIRONMENT }}-${{ env.TIMESTAMP }}" || echo "Failed to send final plan to Deepseek"
+          terraform -chdir=terraform/environments/prod apply -input=false -auto-approve plan_output/plan.tfplan
