@@ -10,12 +10,13 @@ module "newrelic_ubuntu_postgres_dashboard" {
     {
       name               = "midas"
       hostname_pattern   = "%midas%"
-      description        = "Servidor principal on-premise Ubuntu 24.04"
+      description        = "Principal Server in midas"
       postgresql_enabled = true
       postgresql_process = "postgres"
       tags = {
         role = "production"
         type = "on-premise"
+        location = "mx-coahuila"
       }
     }
   ]
