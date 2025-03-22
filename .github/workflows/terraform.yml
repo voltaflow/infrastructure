@@ -25,7 +25,7 @@ on:
 jobs:
   terraform_fmt:
     name: "Terraform Format"
-    uses: ./.github/workflows/ci-cd/terraform-fmt.yml
+    uses: ./.github/workflows/terraform-fmt.yml
     with:
       working_directory: './terraform'
 
