@@ -10,16 +10,16 @@ terraform {
 locals {
   server_count = length(var.servers)
   server_names = join(", ", [for server in var.servers : server.name])
-  
+
   // Conditions to identify hosts
   hostname_conditions = join(" OR ", [
     for server in var.servers : "hostname LIKE '${server.hostname_pattern}'"
   ])
-  
+
   // Filtering for PostgreSQL-enabled servers
   postgres_servers             = [for server in var.servers : server if server.postgresql_enabled]
   postgres_hostname_conditions = length(local.postgres_servers) > 0 ? join(" OR ", [for server in local.postgres_servers : "hostname LIKE '${server.hostname_pattern}'"]) : ""
-  postgres_process_conditions  = length(local.postgres_servers) > 0 ? join(" OR ", [
+  postgres_process_conditions = length(local.postgres_servers) > 0 ? join(" OR ", [
     for server in local.postgres_servers : "(hostname LIKE '${server.hostname_pattern}' AND processName = '${server.postgresql_process}')"
   ]) : ""
 }

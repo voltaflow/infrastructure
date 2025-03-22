@@ -14,8 +14,8 @@ module "newrelic_ubuntu_postgres_dashboard" {
       postgresql_enabled = true
       postgresql_process = "postgres"
       tags = {
-        role = "production"
-        type = "on-premise"
+        role     = "production"
+        type     = "on-premise"
         location = "mx-coahuila"
       }
     }
